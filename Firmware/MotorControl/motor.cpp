@@ -597,13 +597,16 @@ void Motor::update(uint32_t timestamp) {
 /**
  * @brief Called when the underlying hardware timer triggers an update event.
  */
+// 拿到 ADC 采到的三相电流，减去零点偏置，得到真实电流，然后做过流检查，并把电流交给 FOC 控制律
 void Motor::current_meas_cb(uint32_t timestamp, std::optional<Iph_ABC_t> current) {
     // TODO: this is platform specific
     //const float current_meas_period = static_cast<float>(2 * TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1)) / TIM_1_8_CLOCK_HZ;
+    // 创建一个计时器对象，进入函数开始计时，函数结束自动记录耗时
     TaskTimerContext tmr{axis_->task_times_.current_sense};
-
+    // 电流采样事件计数
     n_evt_current_measurement_++;
 
+    // 判断电流零点校准是否有效
     bool dc_calib_valid = (dc_calib_running_since_ >= config_.dc_calib_tau * 7.5f)
                        && (abs(DC_calib_.phA) < max_dc_calib_)
                        && (abs(DC_calib_.phB) < max_dc_calib_)
@@ -664,6 +667,7 @@ void Motor::current_meas_cb(uint32_t timestamp, std::optional<Iph_ABC_t> current
 /**
  * @brief Called when the underlying hardware timer triggers an update event.
  */
+// 持续估计电流采样的零点偏置
 void Motor::dc_calib_cb(uint32_t timestamp, std::optional<Iph_ABC_t> current) {
     const float dc_calib_period = static_cast<float>(2 * TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1)) / TIM_1_8_CLOCK_HZ;
     TaskTimerContext tmr{axis_->task_times_.dc_calib};
@@ -683,6 +687,7 @@ void Motor::dc_calib_cb(uint32_t timestamp, std::optional<Iph_ABC_t> current) {
 }
 
 
+// 让控制律算出三相 PWM 占空比，然后写进 TIM1/TIM8 的 CCR 寄存器
 void Motor::pwm_update_cb(uint32_t output_timestamp) {
     TaskTimerContext tmr{axis_->task_times_.pwm_update};
     n_evt_pwm_update_++;

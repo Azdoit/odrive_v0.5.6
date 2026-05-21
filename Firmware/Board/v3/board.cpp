@@ -418,6 +418,7 @@ void start_timers() {
 static bool fetch_and_reset_adcs(
         std::optional<Iph_ABC_t>* current0,
         std::optional<Iph_ABC_t>* current1) {
+    // 等待5个ADC采样全部完成
     bool all_adcs_done = (ADC1->SR & ADC_SR_JEOC) == ADC_SR_JEOC
         && (ADC2->SR & (ADC_SR_EOC | ADC_SR_JEOC)) == (ADC_SR_EOC | ADC_SR_JEOC)
         && (ADC3->SR & (ADC_SR_EOC | ADC_SR_JEOC)) == (ADC_SR_EOC | ADC_SR_JEOC);
@@ -425,9 +426,11 @@ static bool fetch_and_reset_adcs(
         return false;
     }
 
+    // 获取VBUS值
     vbus_sense_adc_cb(ADC1->JDR1);
 
     if (1) {  //m0_gate_driver.is_ready()
+        // M0的B/C相电流
         std::optional<float> phB = motors[0].phase_current_from_adcval(ADC2->JDR1);
         std::optional<float> phC = motors[0].phase_current_from_adcval(ADC3->JDR1);
         if (phB.has_value() && phC.has_value()) {
@@ -436,13 +439,14 @@ static bool fetch_and_reset_adcs(
     }
 
     if (1) {  //m1_gate_driver.is_ready()
+        // M1的B/C相电流
         std::optional<float> phB = motors[1].phase_current_from_adcval(ADC2->DR);
         std::optional<float> phC = motors[1].phase_current_from_adcval(ADC3->DR);
         if (phB.has_value() && phC.has_value()) {
             *current1 = {-*phB - *phC, *phB, *phC};
         }
     }
-    
+    // 清除中断标志
     ADC1->SR = ~(ADC_SR_JEOC);
     ADC2->SR = ~(ADC_SR_EOC | ADC_SR_JEOC | ADC_SR_OVR);
     ADC3->SR = ~(ADC_SR_EOC | ADC_SR_JEOC | ADC_SR_OVR);
@@ -474,13 +478,18 @@ void TIM5_IRQHandler(void) {
 volatile uint32_t timestamp_ = 0;
 volatile bool counting_down_ = false;
 
+
+// TIM8中断函数，odrive核心
 void TIM8_UP_TIM13_IRQHandler(void) {
+    // 统计这个中断进了多少次，用于调试/性能统计
     COUNT_IRQ(TIM8_UP_TIM13_IRQn);
     
     // Entry into this function happens at 21-23 clock cycles after the timer
     // update event.
+    // 清除 TIM8 更新中断标志。不清除的话会一直进中断
     __HAL_TIM_CLEAR_IT(&htim8, TIM_IT_UPDATE);
 
+    // TIM8 中断频率是 16kHz 。168MHz / 3500 /3
     static uint32_t ledtime;   //loop222.8
     if(++ledtime>=8000){   //0.5秒，TIM8中断频率16KHz
         ledtime=0;
@@ -489,8 +498,10 @@ void TIM8_UP_TIM13_IRQHandler(void) {
     
     // If the corresponding timer is counting up, we just sampled in SVM vector 0, i.e. real current
     // If we are counting down, we just sampled in SVM vector 7, with zero current
+    // 读取 TIM8 当前方向,PWM中心对齐有向上计数和向下计数两个阶段。
     bool counting_down = TIM8->CR1 & TIM_CR1_DIR;
 
+    // 正常中断，一次向上计数，一次向下计数，如果连续两次方向一样，说明中间漏了一次 TIM8 更新中断，一旦漏中断，两个电机立刻 disarm。因为电流环/FOC 是强实时的，漏节拍可能导致控制失控
     bool timer_update_missed = (counting_down_ == counting_down);
     if (timer_update_missed) {
         motors[0].disarm_with_error(Motor::ERROR_TIMER_UPDATE_MISSED);
@@ -499,8 +510,10 @@ void TIM8_UP_TIM13_IRQHandler(void) {
     }
     counting_down_ = counting_down;
 
+    // 更新时间戳，记录每次中断的计数
     timestamp_ += TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1);
 
+    // 向上计数时，此时上桥为低，下桥为高，下桥导通，开始读编码器，触发控制循环软件中断
     if (!counting_down) {
         TaskTimer::enabled = odrv.task_timers_armed_;
         // Run sampling handlers and kick off control tasks when TIM8 is
@@ -511,6 +524,7 @@ void TIM8_UP_TIM13_IRQHandler(void) {
         // Tentatively reset all PWM outputs to 50% duty cycles. If the control
         // loop handler finishes in time then these values will be overridden
         // before they go into effect.
+        // 安全兜底
         TIM1->CCR1 =
         TIM1->CCR2 =
         TIM1->CCR3 =
@@ -529,6 +543,7 @@ void ControlLoop_IRQHandler(void) {
     std::optional<Iph_ABC_t> current0;
     std::optional<Iph_ABC_t> current1;
 
+   // 获取采样电流，此时下臂的PWM高电平，MOS打开
     if (!fetch_and_reset_adcs(&current0, &current1)) {
         motors[0].disarm_with_error(Motor::ERROR_BAD_TIMING);
         motors[1].disarm_with_error(Motor::ERROR_BAD_TIMING);
@@ -539,6 +554,7 @@ void ControlLoop_IRQHandler(void) {
     // So for now we guess the current to be 0 (this is not correct shortly after
     // disarming and when the motor spins fast in idle). Passing an invalid
     // current reading would create problems with starting FOC.
+    // 如果发生了刹车事件，清零电流
     if (!(TIM1->BDTR & TIM_BDTR_MOE_Msk)) {
         current0 = {0.0f, 0.0f};
     }
@@ -546,31 +562,38 @@ void ControlLoop_IRQHandler(void) {
         current1 = {0.0f, 0.0f};
     }
 
+    // 对采样电流进行处理
     motors[0].current_meas_cb(timestamp - TIM1_INIT_COUNT, current0);
     motors[1].current_meas_cb(timestamp, current1);
 
+    // 更新各种事件
     odrv.control_loop_cb(timestamp);
 
     // By this time the ADCs for both M0 and M1 should have fired again. But
     // let's wait for them just to be sure.
+
+    // 等待下一次更新中断发生，因为ADC2的触发是由TIM8的中断，所以等待下一次ADC2采样完成就是TIM8又中断了一次
     MEASURE_TIME(odrv.task_times_.dc_calib_wait) {
         while (!(ADC2->SR & ADC_SR_EOC));
     }
-
+    // 获取采样电流，此时下臂关闭
     if (!fetch_and_reset_adcs(&current0, &current1)) {
         motors[0].disarm_with_error(Motor::ERROR_BAD_TIMING);
         motors[1].disarm_with_error(Motor::ERROR_BAD_TIMING);
     }
 
+    // 此时下臂是关闭的，电机电流理论为0，也可能有一点 ADC 偏置，校准电流
     motors[0].dc_calib_cb(timestamp + TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1) - TIM1_INIT_COUNT, current0);
     motors[1].dc_calib_cb(timestamp + TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1), current1);
 
+    // 更新PWM输出
     motors[0].pwm_update_cb(timestamp + 3 * TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1) - TIM1_INIT_COUNT);
     motors[1].pwm_update_cb(timestamp + 3 * TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1));
 
     // If we did everything right, the TIM8 update handler should have been
     // called exactly once between the start of this function and now.
 
+    //  两次TIM8中断，所以此时理论上是相等的
     if (timestamp_ != timestamp + TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1)) {
         motors[0].disarm_with_error(Motor::ERROR_CONTROL_DEADLINE_MISSED);
         motors[1].disarm_with_error(Motor::ERROR_CONTROL_DEADLINE_MISSED);

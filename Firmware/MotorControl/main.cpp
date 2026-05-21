@@ -397,11 +397,13 @@ void ODrive::control_loop_cb(uint32_t timestamp) {
         }
 
         uart_poll();
+        // 大概是针对PA8的输出
         odrv.oscilloscope_.update();
     }
 
     for (auto& axis : axes) {
         MEASURE_TIME(axis.task_times_.endstop_update) {
+            // endstop模式
             axis.min_endstop_.update();
             axis.max_endstop_.update();
         }
@@ -410,9 +412,11 @@ void ODrive::control_loop_cb(uint32_t timestamp) {
     MEASURE_TIME(task_times_.control_loop_checks) {
         for (auto& axis: axes) {
             // look for errors at axis level and also all subcomponents
+            // 检查是否有错误
             bool checks_ok = axis.do_checks(timestamp);
 
             // make sure the watchdog is being fed. 
+            // 看门狗是否正常
             bool watchdog_ok = axis.watchdog_check();
 
             if (!checks_ok || !watchdog_ok) {
@@ -424,11 +428,14 @@ void ODrive::control_loop_cb(uint32_t timestamp) {
     for (auto& axis: axes) {
         // Sub-components should use set_error which will propegate to this error_
         MEASURE_TIME(axis.task_times_.thermistor_update) {
+            // mos管温度检测
             axis.motor_.fet_thermistor_.update();
+            // 电机温度检测
             axis.motor_.motor_thermistor_.update();
         }
 
         MEASURE_TIME(axis.task_times_.encoder_update)
+        // 编码器更新，锁相环算法
             axis.encoder_.update();
     }
 
@@ -437,21 +444,25 @@ void ODrive::control_loop_cb(uint32_t timestamp) {
 
     for (auto& axis: axes) {
         MEASURE_TIME(axis.task_times_.sensorless_estimator_update)
+            // 无感算法
             axis.sensorless_estimator_.update();
 
         MEASURE_TIME(axis.task_times_.controller_update) {
+            // input模式处理
             if (!axis.controller_.update()) { // uses position and velocity from encoder
                 axis.error_ |= Axis::ERROR_CONTROLLER_FAILED;
             }
         }
 
         MEASURE_TIME(axis.task_times_.open_loop_controller_update)
+        // 开环
             axis.open_loop_controller_.update(timestamp);
 
         MEASURE_TIME(axis.task_times_.motor_update)
             axis.motor_.update(timestamp); // uses torque from controller and phase_vel from encoder
 
         MEASURE_TIME(axis.task_times_.current_controller_update)
+        // 电流环控制
             axis.motor_.current_control_.update(timestamp); // uses the output of controller_ or open_loop_contoller_ and encoder_ or sensorless_estimator_ or acim_estimator_
     }
 

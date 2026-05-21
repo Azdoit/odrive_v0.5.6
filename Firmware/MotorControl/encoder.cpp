@@ -476,25 +476,30 @@ static bool decode_hall(uint8_t hall_state, int32_t* hall_cnt) {
 
 void Encoder::sample_now() {
     switch (mode_) {
+        // ABZ
         case MODE_INCREMENTAL: {
             tim_cnt_sample_ = (int16_t)timer_->Instance->CNT;
         } break;
 
+        // 霍尔传感器
         case MODE_HALL: {
             // do nothing: samples already captured in general GPIO capture
         } break;
 
+        // 正弦波
         case MODE_SINCOS: {
             sincos_sample_s_ = get_adc_relative_voltage(get_gpio(config_.sincos_gpio_pin_sin)) - 0.5f;
             sincos_sample_c_ = get_adc_relative_voltage(get_gpio(config_.sincos_gpio_pin_cos)) - 0.5f;
         } break;
 
+        // SPI接口磁编码器
         case MODE_SPI_ABS_AMS:
         case MODE_SPI_ABS_CUI:
         case MODE_SPI_ABS_AEAT:
         case MODE_SPI_ABS_RLS:
         case MODE_SPI_ABS_MA732:
-        {
+        {   
+            // spi3 DMA方式读取角度
             abs_spi_start_transaction();
             // Do nothing
         } break;

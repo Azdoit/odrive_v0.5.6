@@ -29,3 +29,5 @@ openocd.log
 
 # OS-specific files
 .DS_Store
+
+build
