@@ -9,6 +9,8 @@
 #define MEASURE_LENGTH
 #define MEASURE_MAX_LENGTH
 
+
+// 耗时测量模块
 inline uint16_t sample_TIM13() {
     constexpr uint16_t clocks_per_cnt = (uint16_t)((float)TIM_1_8_CLOCK_HZ / (float)TIM_APB1_CLOCK_HZ);
     return clocks_per_cnt * TIM13->CNT;  // TODO: Use a hw_config

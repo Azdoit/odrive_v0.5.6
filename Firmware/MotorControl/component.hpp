@@ -5,6 +5,8 @@
 #include <optional>
 #include <variant>
 
+
+// 用于管理 ODrive 组件之间的数据更新。其核心思想是：通过 InputPort 和 OutputPort 实现模块之间的数据传递和依赖管理，支持复杂的控制逻辑
 class ComponentBase {
 public:
     /**

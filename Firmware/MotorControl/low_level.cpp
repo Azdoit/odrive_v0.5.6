@@ -195,6 +195,7 @@ uint16_t adc_measurements_[ADC_CHANNEL_COUNT] = { 0 };
 //
 // The injected (high priority) channel of ADC1 is used to sample vbus_voltage.
 // This conversion is triggered by TIM1 at the frequency of the motor control loop.
+// 采集温度，使用 ADC1 普通通道进行采样，其中 ADC1 的 16 个普通通道采样数据都会被 DMA 搬运到 adc_measurements_ 数组中
 void start_general_purpose_adc() {
     ADC_ChannelConfTypeDef sConfig;
 
@@ -227,6 +228,7 @@ void start_general_purpose_adc() {
         }
     }
 
+    // 使用DMA存入adc_measurements_
     HAL_ADC_Start_DMA(&hadc1, reinterpret_cast<uint32_t*>(adc_measurements_), ADC_CHANNEL_COUNT);
 }
 
@@ -258,6 +260,7 @@ float get_adc_relative_voltage(Stm32Gpio gpio) {
 
 // @brief Given a GPIO_port and pin return the associated adc_channel.
 // returns UINT16_MAX if there is no adc_channel;
+// 采集的GPIO口
 uint16_t channel_from_gpio(Stm32Gpio gpio) {
     uint32_t channel = UINT32_MAX;
     if (gpio.port_ == GPIOA) {

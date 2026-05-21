@@ -25,7 +25,7 @@ uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 uint32_t _reboot_cookie __attribute__ ((section (".noinit")));
 extern char _estack; // provided by the linker script
 
-
+// `odrv` 是全局根对象，也是 odrivetool 看到的 `odrv0` 的固件侧根节点。通信层写对象字段，本质上就是写 `odrv` 下面的成员
 ODrive odrv{};
 
 
@@ -529,19 +529,19 @@ uint32_t ODrive::get_gpio_states() {
  */
 static void rtos_main(void*) {
     // Init USB device
-    MX_USB_DEVICE_Init();
+    MX_USB_DEVICE_Init();  // 初始化 USB 设备让 odrivetool/Fibre/ASCII 能访问对象
 
 
     // Start ADC for temperature measurements and user measurements
-    start_general_purpose_adc();
+    start_general_purpose_adc();   // ADC1 普通通道 0-15 DMA 轮询温度、模拟输入、部分板载模拟量
 
     //osDelay(100);
     // Init communications (this requires the axis objects to be constructed)
-    init_communication();
+    init_communication();   // 启动 USB/UART/CAN 通信接收 `requested_state`、`input_pos` 等命令
 
     // Start pwm-in compare modules
     // must happen after communication is initialized
-    pwm0_input.init();
+    pwm0_input.init();    // PWM 输入捕获外部 PWM 命令输入
 
     // Set up the CS pins for absolute encoders (TODO: move to GPIO init switch statement)
     for(auto& axis : axes){
@@ -554,11 +554,11 @@ static void rtos_main(void*) {
     // If this does not succeed, a fault will be raised and the idle loop will
     // periodically attempt to reinit the gate driver.
     for(auto& axis: axes){
-        axis.motor_.setup();
+        axis.motor_.setup();   // 配置电流采样增益、限流等   电流环前置条件
     }
 
     for(auto& axis: axes){
-        axis.encoder_.setup();
+        axis.encoder_.setup();  // 配置编码器模式位置/速度    估算前置条件
     }
 
     for(auto& axis: axes){
@@ -566,8 +566,8 @@ static void rtos_main(void*) {
     }
 
     // Start PWM and enable adc interrupts/callbacks
-    start_adc_pwm();
-    start_analog_thread();
+    start_adc_pwm();  // 使能 PWM、ADC、定时器      硬实时控制链路开始
+    start_analog_thread(); // 慢速模拟输入映射      非硬实时输入
 
     // Wait for up to 2s for motor to become ready to allow for error-free
     // startup. This delay gives the current sensor calibration time to
@@ -591,7 +591,7 @@ static void rtos_main(void*) {
     // procedures and then run the actual controller loops.
     // TODO: generalize for AXIS_COUNT != 2
     for (size_t i = 0; i < AXIS_COUNT; ++i) {
-        axes[i].start_thread();
+        axes[i].start_thread();      // 启动 Axis 状态机        执行校准、闭环等状态
     }
 
     odrv.system_stats_.fully_booted = true;
@@ -655,6 +655,7 @@ extern "C" int main(void) {
     // This procedure of building a USB serial number should be identical
     // to the way the STM's built-in USB bootloader does it. This means
     // that the device will have the same serial number in normal and DFU mode.
+    // 生成 USB 序列号
     uint32_t uuid0 = *(uint32_t *)(UID_BASE + 0);
     uint32_t uuid1 = *(uint32_t *)(UID_BASE + 4);
     uint32_t uuid2 = *(uint32_t *)(UID_BASE + 8);
@@ -669,11 +670,13 @@ extern "C" int main(void) {
     serial_number_str[12] = 0;
 
     // Init low level system functions (clocks, flash interface)
+    // 初始化时钟、Flash、HAL 基础功能
     system_init();
 
     // Load configuration from NVM. This needs to happen after system_init()
     // since the flash interface must be initialized and before board_init()
     // since board initialization can depend on the config.
+    // 从 NVM 读取 `odrv`、Axis、Motor、Encoder、Controller 等配置
     size_t config_size = 0;
     bool success = config_manager.start_load()
             && config_read_all()
@@ -692,11 +695,13 @@ extern "C" int main(void) {
             || (odrv.config_.enable_uart_c && !uart_c);
 
     // Init board-specific peripherals
+    // 调用 `board_init()` 初始化 ODrive v3.x 板级外设
     if (!board_init()) {
         for (;;); // TODO: handle properly
     }
 
     // Init GPIOs according to their configured mode
+    // 根据 `odrv.config_.gpio_modes[]` 配置用户 GPIO
     for (size_t i = 0; i < GPIO_COUNT; ++i) {
         // Skip unavailable GPIOs
         if (!get_gpio(i)) {
@@ -830,6 +835,7 @@ extern "C" int main(void) {
     }
 
     // Init usb irq binary semaphore, and start with no tokens by removing the starting one.
+    // 创建 USB/CAN/UART 所需的 FreeRTOS 队列和信号量
     osSemaphoreDef(sem_usb_irq);
     sem_usb_irq = osSemaphoreCreate(osSemaphore(sem_usb_irq), 1);
     osSemaphoreWait(sem_usb_irq, 0);
@@ -847,10 +853,12 @@ extern "C" int main(void) {
     osSemaphoreWait(sem_can, 0);
 
     // Create main thread
+    // 创建 `rtos_main` 任务
     osThreadDef(defaultTask, rtos_main, osPriorityNormal, 0, stack_size_default_task / sizeof(StackType_t));
     defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
     // Start scheduler
+    // 调用 `osKernelStart()` 进入 FreeRTOS 调度
     osKernelStart();
     
     for (;;);

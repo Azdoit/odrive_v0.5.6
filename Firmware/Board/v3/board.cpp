@@ -291,21 +291,22 @@ void system_init() {
 
 bool board_init() {
     // Initialize all configured peripherals
-    MX_GPIO_Init();
-    MX_DMA_Init();
-    MX_ADC1_Init();
-    MX_ADC2_Init();
-    MX_TIM1_Init();
-    MX_TIM8_Init();
-    MX_TIM3_Init();
-    MX_TIM4_Init();
-    MX_SPI3_Init();
-    MX_ADC3_Init();
-    MX_TIM2_Init();
-    MX_TIM5_Init();
-    MX_TIM13_Init();
+    MX_GPIO_Init();  // 芯片引脚默认状态     使能门极驱动、门驱动CS、编码器引脚、故障输入、用户 GPIO
+    MX_DMA_Init();   // DMA 控制器ADC1 普通通道 DMA、通信或外设搬运
+    MX_ADC1_Init();  // ADC1VBUS regular 由软件触发，injected 采样由TIM1 TRGO 触发，         ADC1 普通通道后续被重配为 0-15 轮询
+    MX_ADC2_Init();  // M0电流采样一路，regular 由 TIM8 TRGO 触发，injected 由 TIM1 TRGO 触发
+    MX_TIM1_Init();  // TIM1 高级定时器M0 三相 PWM，TRGO 触发 M0 相关 ADC injected 采样
+    MX_TIM8_Init();  // TIM8 高级定时器M1 三相 PWM，TRGO 触发 M1 相关 ADC regular 采样，并产生主控制节拍
+    MX_TIM3_Init();  // TIM3 编码器接口M0 ABZ 增量编码器计数
+    MX_TIM4_Init();  // TIM4 编码器接口M1 ABZ 增量编码器计数
+    MX_SPI3_Init();  // SPI3  DRV8301 和 SPI 绝对值编码器通信
+    MX_ADC3_Init();  // 和ADC2一样，采集M1采 B/C 两相电流
+    MX_TIM2_Init();  // TIM2制动电阻 PWM
+    MX_TIM5_Init();  // TIM5PWM 输入捕获
+    MX_TIM13_Init(); // 与 TIM1/TIM8 同步的辅助定时
 
     // External interrupt lines are individually enabled in stm32_gpio.cpp
+    // 中断优先级
     HAL_NVIC_SetPriority(EXTI0_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(EXTI0_IRQn);
     HAL_NVIC_SetPriority(EXTI1_IRQn, 1, 0);
@@ -327,6 +328,8 @@ bool board_init() {
     HAL_NVIC_SetPriority(TIM8_UP_TIM13_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(TIM8_UP_TIM13_IRQn);
 
+
+    // 根据odrv的配置来开启一些串口，i2c，can等
     if (odrv.config_.enable_uart_a) {
         uart_a->Init.BaudRate = odrv.config_.uart_a_baudrate;
         MX_UART4_Init();
@@ -361,10 +364,12 @@ bool board_init() {
     }
 
     // Ensure that debug halting of the core doesn't leave the motor PWM running
+    // 调试暂停时冻结 PWM 定时器，避免 CPU 停住但 PWM 继续跑
     __HAL_DBGMCU_FREEZE_TIM1();
     __HAL_DBGMCU_FREEZE_TIM8();
     __HAL_DBGMCU_FREEZE_TIM13();
 
+    // 复位两个 DRV8301 门极驱动
     Stm32Gpio drv_enable_gpio = {EN_GATE_GPIO_Port, EN_GATE_Pin};
 
     // Reset both DRV chips. The enable pin also controls the SPI interface, not
@@ -543,6 +548,8 @@ void ControlLoop_IRQHandler(void) {
     std::optional<Iph_ABC_t> current0;
     std::optional<Iph_ABC_t> current1;
 
+    // 单片机上电，默认是递增计数从0-ARR，再是ARR-0，所以先是递增计数，而设置了pwm为模式2，所以0-ARR中的CNT<ARR为低电平，所以CH为低电平，那么此时下臂CHN为高电平，MOS打开
+    // CenterAligned3 更方便在上数/下数两个不同 PWM 区域安排 ADC 触发。
    // 获取采样电流，此时下臂的PWM高电平，MOS打开
     if (!fetch_and_reset_adcs(&current0, &current1)) {
         motors[0].disarm_with_error(Motor::ERROR_BAD_TIMING);
@@ -562,7 +569,7 @@ void ControlLoop_IRQHandler(void) {
         current1 = {0.0f, 0.0f};
     }
 
-    // 对采样电流进行处理
+    // 对采样电流进行处理,进入Motor和FOC
     motors[0].current_meas_cb(timestamp - TIM1_INIT_COUNT, current0);
     motors[1].current_meas_cb(timestamp, current1);
 
@@ -576,13 +583,13 @@ void ControlLoop_IRQHandler(void) {
     MEASURE_TIME(odrv.task_times_.dc_calib_wait) {
         while (!(ADC2->SR & ADC_SR_EOC));
     }
-    // 获取采样电流，此时下臂关闭
+    // 读取用于零点校准的采样，此时下臂关闭
     if (!fetch_and_reset_adcs(&current0, &current1)) {
         motors[0].disarm_with_error(Motor::ERROR_BAD_TIMING);
         motors[1].disarm_with_error(Motor::ERROR_BAD_TIMING);
     }
 
-    // 此时下臂是关闭的，电机电流理论为0，也可能有一点 ADC 偏置，校准电流
+    // 此时下臂是关闭的，电机电流理论为0，也可能有一点 ADC 偏置，校准电流   更新 ADC 电流零点偏置
     motors[0].dc_calib_cb(timestamp + TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1) - TIM1_INIT_COUNT, current0);
     motors[1].dc_calib_cb(timestamp + TIM_1_8_PERIOD_CLOCKS * (TIM_1_8_RCR + 1), current1);
 

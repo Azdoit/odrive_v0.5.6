@@ -3,6 +3,16 @@
 #include <Drivers/STM32/stm32_system.h>
 #include <bitset>
 
+// Encoder 负责把硬件计数或角度读数变成控制器需要的：
+
+// ```text
+// 机械位置 pos_estimate_
+// 机械速度 vel_estimate_
+// 电角度 phase_
+// 电角速度 phase_vel_
+// ```
+
+// ### Controller
 Encoder::Encoder(TIM_HandleTypeDef* timer, Stm32Gpio index_gpio,
                  Stm32Gpio hallA_gpio, Stm32Gpio hallB_gpio, Stm32Gpio hallC_gpio,
                  Stm32SpiArbiter* spi_arbiter) :

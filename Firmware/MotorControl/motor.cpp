@@ -148,6 +148,17 @@ struct InductanceMeasurementControlLaw : AlphaBetaFrameController {
 };
 
 
+// Motor 负责和功率级强相关的事情：
+
+// | 职责            | 典型函数                                 |
+// | --------------- | ---------------------------------------- |
+// | 电流采样换算    | `phase_current_from_adcval()`            |
+// | 电流测量回调    | `current_meas_cb()`                      |
+// | 零点偏置估计    | `dc_calib_cb()`                          |
+// | PWM 写入        | `pwm_update_cb()`、`apply_pwm_timings()` |
+// | 使能/失能功率级 | `arm()`、`disarm()`                      |
+// | 电流环参数      | `update_current_controller_gains()`      |
+
 Motor::Motor(TIM_HandleTypeDef* timer,
              uint8_t current_sensor_mask,
              float shunt_conductance,
@@ -652,6 +663,7 @@ void Motor::current_meas_cb(uint32_t timestamp, std::optional<Iph_ABC_t> current
         disarm_with_error(ERROR_UNKNOWN_CURRENT_MEASUREMENT);
     }
 
+    // 送入FOC
     if (control_law_) {
         Error err = control_law_->on_measurement(vbus_voltage,
                             current_meas_.has_value() ?

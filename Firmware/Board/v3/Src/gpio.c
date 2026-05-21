@@ -86,9 +86,11 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  // DRV8301驱动芯片的CS引脚
   HAL_GPIO_WritePin(GPIOC, M0_nCS_Pin|M1_nCS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
+  // DRV8301驱动芯片的使能引脚，供两块驱动芯片
   HAL_GPIO_WritePin(EN_GATE_GPIO_Port, EN_GATE_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : PCPin PCPin */
@@ -99,6 +101,7 @@ void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PCPin PCPin PCPin */
+  // 两个编码器的ABZ中的Z（AB是用TIM3和TIM4的编码器模式）和一个PC4
   GPIO_InitStruct.Pin = M1_ENC_Z_Pin|GPIO_5_Pin|M0_ENC_Z_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -117,6 +120,7 @@ void MX_GPIO_Init(void)
   //GPIO_InitStruct.Pull = GPIO_PULLUP;
   //HAL_GPIO_Init(nFAULT_GPIO_Port, &GPIO_InitStruct);
 
+  // 这里把PD2原来的驱动芯片的nFAULT_Pin用来闪烁灯了
   GPIO_InitStruct.Pin = GPIO_PIN_2;            //loop222.8
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;

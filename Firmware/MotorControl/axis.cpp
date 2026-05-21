@@ -7,6 +7,12 @@
 #include "utils.hpp"
 #include "communication/interface_can.hpp"
 
+// Axis 是“一个电机轴”的管理对象。它不直接计算三相 PWM，而是组织状态机和子模块：
+//  Axis
+//   -> 负责状态切换、错误处理、看门狗、校准流程
+//   -> 调用 Motor 做电流与 PWM
+//   -> 调用 Encoder 做位置速度
+//   -> 调用 Controller 做位置/速度/力矩控制
 Axis::Axis(int axis_num,
            uint16_t default_step_gpio_pin,
            uint16_t default_dir_gpio_pin,

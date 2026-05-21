@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <numeric>
 
+// Controller 接收用户命令，例如 `input_pos_`、`input_vel_`、`input_torque_`，根据控制模式生成最终力矩命令 `torque_output_`。
 bool Controller::apply_config() {
     config_.parent = this;
     update_filter_gains();
